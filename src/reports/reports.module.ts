@@ -8,5 +8,6 @@ import { ReportsService } from './reports.service.js';
   imports: [AttemptsModule, ReviewsModule],
   controllers: [ReportsController],
   providers: [ReportsService],
+  exports: [ReportsService],
 })
 export class ReportsModule {}

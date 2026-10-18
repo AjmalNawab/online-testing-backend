@@ -101,6 +101,7 @@ export function toPublicTestInfo(
     question_count: questions.length,
     total_marks: totalMarks(questions),
     identity_fields: test.identity_fields,
+    requires_account: test.require_student_account,
   };
 }
 

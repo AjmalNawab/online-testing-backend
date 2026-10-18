@@ -14,7 +14,11 @@ export class PgDatabase extends Database {
       connectionString,
       max: options.max ?? 10,
       idleTimeoutMillis: 30_000,
-      connectionTimeoutMillis: 10_000,
+      // New connections can take a few seconds (TLS, distant region, IPv6); allow some slack.
+      connectionTimeoutMillis: 15_000,
+      // TCP keep-alive stops routers and NAT from silently dropping idle connections.
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10_000,
       statement_timeout: 30_000,
       ssl: options.ssl === false ? undefined : { rejectUnauthorized: false },
       application_name: 'online-test-backend',

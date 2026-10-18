@@ -28,6 +28,10 @@ const envSchema = z
     GEMINI_API_KEY: z.string().min(10).optional(),
     GEMINI_MODEL: z.string().regex(/^[a-z0-9.-]+$/).default('gemini-3.7-flash'),
     AI_TIMEOUT_MS: z.coerce.number().int().min(5_000).max(600_000).default(180_000),
+    /** How much the model reasons before answering. "low" is several times faster; higher may help hard topics. */
+    GEMINI_THINKING_LEVEL: z.enum(['low', 'medium', 'high']).default('low'),
+    /** Comma-separated models to try, in order, when GEMINI_MODEL is overloaded. "none" disables fallback. */
+    GEMINI_FALLBACK_MODELS: z.string().regex(/^[a-z0-9.,\s-]+$/).default('gemini-3.6-flash,gemini-3.5-flash-lite'),
     /** Max AI calls per admin per 24 hours (cost guard). */
     AI_DAILY_LIMIT: z.coerce.number().int().min(1).max(10_000).default(100),
     EXPIRY_WORKER_ENABLED: booleanString.default(true),
@@ -56,7 +60,15 @@ export interface AppConfig {
   supabaseSecretKey: string | undefined;
   setupCode: string | undefined;
   corsOrigins: string[];
-  ai: { provider: 'gemini'; apiKey: string | undefined; model: string; timeoutMs: number; dailyLimit: number };
+  ai: {
+    provider: 'gemini';
+    apiKey: string | undefined;
+    model: string;
+    fallbackModels: string[];
+    thinkingLevel: 'low' | 'medium' | 'high';
+    timeoutMs: number;
+    dailyLimit: number;
+  };
   expiryWorker: { enabled: boolean; intervalSeconds: number };
   trustProxyHops: number;
   swaggerEnabled: boolean;
@@ -97,6 +109,10 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       provider: 'gemini',
       apiKey: e.GEMINI_API_KEY,
       model: e.GEMINI_MODEL,
+      fallbackModels: e.GEMINI_FALLBACK_MODELS.split(',')
+        .map((m) => m.trim())
+        .filter((m) => m && m !== 'none' && m !== e.GEMINI_MODEL),
+      thinkingLevel: e.GEMINI_THINKING_LEVEL,
       timeoutMs: e.AI_TIMEOUT_MS,
       dailyLimit: e.AI_DAILY_LIMIT,
     },

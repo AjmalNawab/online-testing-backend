@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { assertAttemptInScope, type Scope } from '../auth/scope.js';
 import { notFound } from '../common/errors.js';
 import type { AdminAttemptDetail, AttemptSummaryRow, Paginated } from '../contracts/responses.js';
 import type { ResultsQuery } from '../contracts/test-schemas.js';
@@ -54,7 +55,11 @@ export class ReviewsService {
     private readonly attempts: AttemptsService,
   ) {}
 
-  async list(q: ResultsQuery): Promise<Paginated<AttemptSummaryRow>> {
+  assertAccess(attemptId: string, scope: Scope): Promise<void> {
+    return assertAttemptInScope(this.db, scope, attemptId);
+  }
+
+  async list(q: ResultsQuery, scope: Scope): Promise<Paginated<AttemptSummaryRow>> {
     // Make sure abandoned attempts show up as finished.
     await this.attempts.finalizeExpired(50).catch(() => undefined);
 
@@ -64,6 +69,7 @@ export class ReviewsService {
       values.push(value);
       where.push(clause.replace('?', `$${values.length}`));
     };
+    if (!scope.isAdmin) add('t.created_by = ?', scope.userId);
     if (q.test_id) add('a.test_id = ?', q.test_id);
     if (q.subject_id) add('t.subject_id = ?', q.subject_id);
     if (q.student) add('a.student_key = lower(regexp_replace(btrim(?), \'\\s+\', \' \', \'g\'))', q.student);

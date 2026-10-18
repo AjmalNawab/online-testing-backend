@@ -17,39 +17,62 @@ export async function startAttempt(
   shareToken: string,
   studentName: string,
   studentInfo: Record<string, string>,
+  studentId: string | null = null,
 ): Promise<{ attempt: AttemptRow; token: string }> {
   const token = generateAttemptToken();
-  const attempt = await store.startAttempt(shareToken, studentName, studentInfo, hashAttemptToken(token));
+  const attempt = await store.startAttempt(shareToken, studentName, studentInfo, hashAttemptToken(token), studentId);
   return { attempt, token };
 }
 
 const isPastGrace = (bundle: AttemptBundle) =>
   Date.parse(bundle.server_time) > Date.parse(bundle.attempt.deadline_at) + ATTEMPT_GRACE_MS;
 
-async function loadBundle(store: AttemptStore, attemptId: string, token: string): Promise<AttemptBundle> {
-  const bundle = await store.getBundle(attemptId, hashAttemptToken(token));
+/** Proves access to an attempt: its secret (guests) or its owner's account. */
+export type AttemptAccess = { token: string } | { studentId: string };
+
+async function loadBundle(store: AttemptStore, attemptId: string, access: AttemptAccess): Promise<AttemptBundle> {
+  const bundle =
+    'token' in access
+      ? await store.getBundle(attemptId, hashAttemptToken(access.token))
+      : await store.getStudentBundle(access.studentId, attemptId);
   if (!bundle) throw new AppError('ATTEMPT_NOT_FOUND', 404, 'This attempt was not found.');
   return bundle;
 }
 
 /** Loads an attempt, finalising it first if its deadline passed while nobody was watching. */
-async function loadFreshBundle(store: AttemptStore, attemptId: string, token: string): Promise<AttemptBundle> {
-  let bundle = await loadBundle(store, attemptId, token);
+async function loadFreshBundle(store: AttemptStore, attemptId: string, access: AttemptAccess): Promise<AttemptBundle> {
+  let bundle = await loadBundle(store, attemptId, access);
   const stale =
     (bundle.attempt.status === 'in_progress' && isPastGrace(bundle)) || bundle.attempt.grading_status === 'grading';
   if (stale) {
     await finalizeAttempt(store, attemptId);
-    bundle = await loadBundle(store, attemptId, token);
+    bundle = await loadBundle(store, attemptId, access);
   }
   return bundle;
 }
 
 export async function getStudentAttemptState(store: AttemptStore, attemptId: string, token: string): Promise<StudentAttemptState> {
-  return toStudentAttemptState(await loadFreshBundle(store, attemptId, token));
+  return toStudentAttemptState(await loadFreshBundle(store, attemptId, { token }));
 }
 
-export async function getStudentResult(store: AttemptStore, attemptId: string, token: string): Promise<StudentResultView> {
-  return toStudentResultView(await loadFreshBundle(store, attemptId, token));
+export async function getStudentResult(store: AttemptStore, attemptId: string, access: string | AttemptAccess): Promise<StudentResultView> {
+  return toStudentResultView(await loadFreshBundle(store, attemptId, typeof access === 'string' ? { token: access } : access));
+}
+
+/** Gives the owner of an in-progress attempt a new secret to continue on this device. */
+export async function resumeOwnAttempt(store: AttemptStore, studentId: string, attemptId: string): Promise<string> {
+  const bundle = await loadFreshBundle(store, attemptId, { studentId });
+  if (bundle.attempt.status !== 'in_progress') {
+    throw new AppError('ATTEMPT_CLOSED', 409, 'This attempt has already been submitted.');
+  }
+  const token = generateAttemptToken();
+  await store.rotateToken(studentId, attemptId, hashAttemptToken(token));
+  return token;
+}
+
+/** Links guest attempts to an account; each must be proved by its secret. */
+export function claimGuestAttempts(store: AttemptStore, studentId: string, tokens: string[]): Promise<number> {
+  return store.claimAttempts(studentId, tokens.map(hashAttemptToken));
 }
 
 export async function saveStudentAnswers(

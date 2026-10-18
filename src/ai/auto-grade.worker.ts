@@ -32,6 +32,9 @@ export class AutoGradeWorker implements OnApplicationBootstrap, OnApplicationShu
     try {
       const n = await this.ai.autoGradePending(5);
       if (n) this.logger.log(`Auto-graded ${n} written answer(s)`);
+    } catch (error) {
+      // A failed run (e.g. the database is briefly unreachable) is retried on the next tick.
+      this.logger.error(`Auto-grading run failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       this.running = false;
     }

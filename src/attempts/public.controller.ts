@@ -1,6 +1,8 @@
 import { Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
 import { ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { MaybeUser, OptionalAuth } from '../auth/auth.guard.js';
+import type { AuthUser } from '../auth/auth.types.js';
 import { AppError } from '../common/errors.js';
 import { ApiZodBody, ZodBody } from '../common/zod.js';
 import type { PublicTestInfo, StartAttemptResponse } from '../contracts/responses.js';
@@ -26,20 +28,23 @@ export class PublicController {
   @Post(':shareToken/attempts')
   @HttpCode(201)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @OptionalAuth()
   @ApiOperation({
-    summary: 'Start an attempt as a guest',
+    summary: 'Start an attempt (as a guest, or as the signed-in student)',
     description:
       'Creates an attempt with a server-recorded start time and deadline. Returns a one-time attempt secret ' +
-      'that must be sent as the X-Attempt-Token header on every attempt request.',
+      'that must be sent as the X-Attempt-Token header on every attempt request. With a bearer token the ' +
+      'attempt is linked to that account; tests that require an account reject guests (401 STUDENT_ACCOUNT_REQUIRED).',
   })
   @ApiZodBody(startAttemptSchema)
   @ApiCreatedResponse({ description: 'StartAttemptResponse' })
   start(
     @Param('shareToken') shareToken: string,
     @ZodBody(startAttemptSchema) body: { student_name: string; student_info: Record<string, string> },
+    @MaybeUser() user: AuthUser | null,
   ): Promise<StartAttemptResponse> {
     assertShareToken(shareToken);
-    return this.attempts.start(shareToken, body.student_name, body.student_info);
+    return this.attempts.start(shareToken, body.student_name, body.student_info, user);
   }
 }
 

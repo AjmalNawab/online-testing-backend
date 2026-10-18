@@ -75,6 +75,8 @@ export interface TestSummary {
   attempt_count: number;
   source: 'manual' | 'ai';
   share_token: string;
+  /** Name of the teacher who created the test. */
+  owner: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -144,6 +146,8 @@ export interface PublicTestInfo {
   question_count: number;
   total_marks: number;
   identity_fields: IdentityField[];
+  /** Guests cannot start this test; students must sign in. */
+  requires_account: boolean;
 }
 
 export interface StudentQuestion {
@@ -347,4 +351,108 @@ export interface AdminAccount {
   display_name: string;
   created_at: string;
   is_you: boolean;
+}
+
+export interface AccessRequest {
+  id: string;
+  email: string | null;
+  display_name: string;
+  requested_at: string;
+}
+
+export interface SignupResponse {
+  email: string;
+  account_type: 'student' | 'teacher';
+  /** Students can sign in straight away; teachers wait for an administrator. */
+  status: 'active' | 'pending_approval';
+}
+
+/** One attempt in a signed-in student's history. */
+export interface MyAttempt {
+  id: string;
+  test: { title: string; subject: string; topic: string | null };
+  attempt_number: number;
+  status: AttemptStatus;
+  started_at: string;
+  deadline_at: string;
+  submitted_at: string | null;
+  visibility: ResultVisibility;
+  /** Present only when results are released. */
+  score: { obtained: number; maximum: number; percentage: number; passed: boolean | null } | null;
+}
+
+// ---------------------------------------------------------------- classes ----
+
+export interface ClassSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  /** 8 characters; shown to users as XXXX-XXXX. */
+  join_code: string;
+  archived: boolean;
+  teacher: { id: string; name: string };
+  member_count: number;
+  test_count: number;
+  created_at: string;
+}
+
+export interface ClassMember {
+  id: string;
+  display_name: string;
+  email: string | null;
+  joined_at: string;
+}
+
+export interface ClassAssignment {
+  test_id: string;
+  title: string;
+  status: TestStatus;
+  due_at: string | null;
+  /** Class members with at least one submitted attempt. */
+  submitted_count: number;
+}
+
+export interface ClassDetail extends ClassSummary {
+  members: ClassMember[];
+  assignments: ClassAssignment[];
+}
+
+/** One class a test is assigned to (test editor view). */
+export interface TestAssignment {
+  class_id: string;
+  class_name: string;
+  due_at: string | null;
+  member_count: number;
+  submitted_count: number;
+}
+
+export interface MyClass {
+  id: string;
+  name: string;
+  teacher_name: string;
+  joined_at: string;
+}
+
+/** A test assigned to one of the signed-in student's classes. */
+export interface MyAssignment {
+  test_id: string;
+  title: string;
+  subject: string;
+  duration_minutes: number;
+  share_token: string;
+  class_name: string;
+  due_at: string | null;
+  state: 'not_started' | 'in_progress' | 'submitted';
+  latest_attempt_id: string | null;
+}
+
+export interface StaffMember {
+  id: string;
+  display_name: string;
+  email: string | null;
+  role: 'admin' | 'teacher';
+  class_count: number;
+  student_count: number;
+  test_count: number;
+  created_at: string;
 }

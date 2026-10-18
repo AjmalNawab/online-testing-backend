@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { assertTestInScope, type Scope } from '../auth/scope.js';
 import { AppError, notFound } from '../common/errors.js';
 import type {
   AdminQuestion,
@@ -17,6 +18,7 @@ import { round2 } from '../grading/grade.js';
 import { publishCheck } from './publish-check.js';
 
 type TestDetailRow = TestRow & {
+  owner_name: string | null;
   subject_name: string;
   topic_name: string | null;
   category_name: string | null;
@@ -64,6 +66,8 @@ export function toSettings(t: TestRow, tags: string[]): TestSettings {
     show_correct_answers: t.show_correct_answers,
     show_explanations: t.show_explanations,
     identity_fields: t.identity_fields,
+    require_student_account: t.require_student_account,
+    class_only: t.class_only,
   };
 }
 
@@ -71,7 +75,8 @@ const DETAIL_SELECT = `
   select t.*, s.name as subject_name, tp.name as topic_name, c.name as category_name,
          coalesce((select array_agg(tg.name order by lower(tg.name)) from public.test_tags tt
                    join public.tags tg on tg.id = tt.tag_id where tt.test_id = t.id), '{}') as tags,
-         (select count(*) from public.test_attempts a where a.test_id = t.id) as attempt_count
+         (select count(*) from public.test_attempts a where a.test_id = t.id) as attempt_count,
+         (select p.display_name from public.profiles p where p.id = t.created_by) as owner_name
   from public.tests t
   join public.subjects s on s.id = t.subject_id
   left join public.topics tp on tp.id = t.topic_id
@@ -81,13 +86,19 @@ const DETAIL_SELECT = `
 export class TestsService {
   constructor(private readonly db: Database) {}
 
-  async list(q: ListTestsQuery): Promise<Paginated<TestSummary>> {
+  /** Throws "not found" unless the caller may manage this test. */
+  assertAccess(id: string, scope: Scope): Promise<void> {
+    return assertTestInScope(this.db, scope, id);
+  }
+
+  async list(q: ListTestsQuery, scope: Scope): Promise<Paginated<TestSummary>> {
     const where: string[] = [];
     const values: unknown[] = [];
     const add = (clause: string, value: unknown) => {
       values.push(value);
       where.push(clause.replace('?', `$${values.length}`));
     };
+    if (!scope.isAdmin) add('t.created_by = ?', scope.userId);
     if (q.search) add(`(t.title ilike ? escape '\\')`, `%${q.search.replace(/[%_\\]/g, '\\$&')}%`);
     if (q.status) add('t.status = ?', q.status);
     else where.push(`t.status <> 'archived'`);
@@ -134,6 +145,7 @@ export class TestsService {
         attempt_count: Number(r.attempt_count),
         source: r.source,
         share_token: r.share_token,
+        owner: r.owner_name,
         created_at: r.created_at,
         updated_at: r.updated_at,
       })),

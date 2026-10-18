@@ -40,10 +40,12 @@ export class AttemptsService {
     });
   }
 
+  /** Starts an attempt as a guest, or linked to the signed-in student when `student` is given. */
   async start(
     shareToken: string,
     studentName: string,
     studentInfo: Record<string, string>,
+    student: { id: string; displayName: string } | null = null,
   ): Promise<StartAttemptResponse> {
     const test = await this.db.one<{ identity_fields: IdentityField[] }>(
       `select identity_fields from public.tests where share_token = $1 and status = 'published'`,
@@ -51,7 +53,9 @@ export class AttemptsService {
     );
     if (!test) throw new AppError('TEST_NOT_AVAILABLE', 404, 'This test is not available. Please check the link.');
     const info = validateIdentity(test.identity_fields, studentInfo);
-    const { attempt, token } = await workflow.startAttempt(this.store, shareToken, studentName, info);
+    // Signed-in students are recorded under their account name.
+    const name = student?.displayName.trim() || studentName;
+    const { attempt, token } = await workflow.startAttempt(this.store, shareToken, name, info, student?.id ?? null);
     return { attempt_id: attempt.id, attempt_token: token, deadline_at: attempt.deadline_at };
   }
 

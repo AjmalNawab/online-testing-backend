@@ -6,6 +6,12 @@ import { AppModule } from './app.module.js';
 import { configureApp } from './app.setup.js';
 import { APP_CONFIG, loadConfig, type AppConfig } from './config/env.js';
 
+// Last line of defence: a stray rejected promise in background work is logged
+// instead of stopping the server (and every exam in progress).
+process.on('unhandledRejection', (reason) => {
+  new Logger('Process').error(`Unhandled rejection: ${reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)}`);
+});
+
 async function bootstrap() {
   if (existsSync('.env')) process.loadEnvFile('.env');
   loadConfig(); // fail fast with a readable message before Nest starts

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Scope } from '../auth/scope.js';
 import type { DashboardStats, ProgressReport } from '../contracts/responses.js';
 import type { ResultsQuery } from '../contracts/test-schemas.js';
 import { Database } from '../database/database.js';
@@ -16,32 +17,39 @@ export class ReportsService {
     private readonly reviews: ReviewsService,
   ) {}
 
-  async dashboard(): Promise<DashboardStats> {
+  async dashboard(scope: Scope): Promise<DashboardStats> {
     await this.attempts.finalizeExpired(50).catch(() => undefined);
+    // Teachers see figures for their own tests only.
+    const own = scope.isAdmin ? 'true' : 't.created_by = $1';
+    const args = scope.isAdmin ? [] : [scope.userId];
     const [tests, attempts, recent, bySubject] = await Promise.all([
       this.db.one<{ total: number; draft: number; published: number; archived: number }>(
         `select count(*) as total,
                 count(*) filter (where status = 'draft') as draft,
                 count(*) filter (where status = 'published') as published,
                 count(*) filter (where status = 'archived') as archived
-         from public.tests`,
+         from public.tests t where ${own}`,
+        args,
       ),
       this.db.one<{ total: number; in_progress: number; completed: number; pending_review: number; avg: number | null }>(
         `select count(*) as total,
-                count(*) filter (where status = 'in_progress') as in_progress,
-                count(*) filter (where status <> 'in_progress') as completed,
-                count(*) filter (where grading_status = 'pending_review') as pending_review,
-                avg(percentage) filter (where grading_status = 'complete') as avg
-         from public.test_attempts`,
+                count(*) filter (where a.status = 'in_progress') as in_progress,
+                count(*) filter (where a.status <> 'in_progress') as completed,
+                count(*) filter (where a.grading_status = 'pending_review') as pending_review,
+                avg(a.percentage) filter (where a.grading_status = 'complete') as avg
+         from public.test_attempts a join public.tests t on t.id = a.test_id where ${own}`,
+        args,
       ),
-      this.db.query<AttemptListRow>(`${ATTEMPT_LIST_SELECT} order by coalesce(a.submitted_at, a.started_at) desc limit 8`),
+      this.db.query<AttemptListRow>(`${ATTEMPT_LIST_SELECT} where ${own} order by coalesce(a.submitted_at, a.started_at) desc limit 8`, args),
       this.db.query<{ subject: string; attempts: number; avg: number | null }>(
         `select s.name as subject, count(a.id) as attempts,
                 avg(a.percentage) filter (where a.grading_status = 'complete') as avg
          from public.subjects s
          join public.tests t on t.subject_id = s.id
          join public.test_attempts a on a.test_id = t.id
+         where ${own}
          group by s.name order by count(a.id) desc limit 10`,
+        args,
       ),
     ]);
     return {
@@ -67,11 +75,11 @@ export class ReportsService {
     };
   }
 
-  async resultsCsv(q: ResultsQuery): Promise<string> {
-    const page = await this.reviews.list({ ...q, page: 1, page_size: 200 });
+  async resultsCsv(q: ResultsQuery, scope: Scope): Promise<string> {
+    const page = await this.reviews.list({ ...q, page: 1, page_size: 200 }, scope);
     const all = [...page.items];
     for (let p = 2; all.length < page.total && p <= 50; p++) {
-      all.push(...(await this.reviews.list({ ...q, page: p, page_size: 200 })).items);
+      all.push(...(await this.reviews.list({ ...q, page: p, page_size: 200 }, scope)).items);
     }
     return toCsv(
       ['Student', 'Test', 'Subject', 'Topic', 'Attempt', 'Status', 'Grading', 'Submitted at', 'Time taken (min)',
@@ -95,26 +103,48 @@ export class ReportsService {
     );
   }
 
-  async progress(student: string | undefined, subjectId: string | undefined): Promise<ProgressReport> {
-    const students = (
-      await this.db.query<{ name: string }>(
-        `select distinct on (student_key) student_name as name from public.test_attempts
-         order by student_key, created_at desc`,
-      )
-    )
-      .map((r) => r.name)
-      .sort((a, b) => a.localeCompare(b));
-    const selected = student ?? (students.length === 1 ? students[0]! : null);
+  /**
+   * Progress across completed attempts. Admins filter by student name; `account`
+   * restricts the report to one signed-in student's own attempts.
+   */
+  async progress(
+    student: string | undefined,
+    subjectId: string | undefined,
+    account?: { id: string; displayName: string },
+    scope?: Scope,
+  ): Promise<ProgressReport> {
+    const teacherId = scope && !scope.isAdmin ? scope.userId : null;
+    const students = account
+      ? []
+      : (
+          await this.db.query<{ name: string }>(
+            `select distinct on (a.student_key) a.student_name as name from public.test_attempts a
+             join public.tests t on t.id = a.test_id
+             where ($1::uuid is null or t.created_by = $1)
+             order by a.student_key, a.created_at desc`,
+            [teacherId],
+          )
+        )
+          .map((r) => r.name)
+          .sort((a, b) => a.localeCompare(b));
+    const selected = account ? account.displayName : (student ?? (students.length === 1 ? students[0]! : null));
 
     const values: unknown[] = [];
     const filters: string[] = [`a.grading_status = 'complete'`];
-    if (selected) {
+    if (account) {
+      values.push(account.id);
+      filters.push(`a.student_id = $${values.length}`);
+    } else if (selected) {
       values.push(selected);
       filters.push(`a.student_key = lower(regexp_replace(btrim($${values.length}), '\\s+', ' ', 'g'))`);
     }
     if (subjectId) {
       values.push(subjectId);
       filters.push(`t.subject_id = $${values.length}`);
+    }
+    if (teacherId) {
+      values.push(teacherId);
+      filters.push(`t.created_by = $${values.length}`);
     }
     const where = filters.join(' and ');
 

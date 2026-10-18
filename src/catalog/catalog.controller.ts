@@ -1,6 +1,6 @@
 import { Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
-import { AdminOnly, CurrentUser } from '../auth/auth.guard.js';
+import { CurrentUser, StaffOnly } from '../auth/auth.guard.js';
 import type { AuthUser } from '../auth/auth.types.js';
 import { ApiZodBody, ZodBody } from '../common/zod.js';
 import type { Category, Subject, Tag, Topic } from '../contracts/responses.js';
@@ -17,8 +17,8 @@ import { CatalogService } from './catalog.service.js';
 type NamedInput = { name: string; description: string | null };
 type NamedPatch = { name?: string; description?: string | null; archived?: boolean };
 
-@ApiTags('catalog (admin)')
-@AdminOnly()
+@ApiTags('catalog (teachers & admins, shared)')
+@StaffOnly()
 @Controller()
 export class CatalogController {
   constructor(private readonly catalog: CatalogService) {}

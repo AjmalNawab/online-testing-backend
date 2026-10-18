@@ -65,6 +65,8 @@ export interface TestRow {
   show_correct_answers: boolean;
   show_explanations: boolean;
   identity_fields: IdentityField[];
+  require_student_account: boolean;
+  class_only: boolean;
   status: TestStatus;
   share_token: string;
   source: 'manual' | 'ai';

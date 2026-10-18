@@ -1,14 +1,15 @@
 import { Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, Put } from '@nestjs/common';
 import { ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { AdminOnly, CurrentUser } from '../auth/auth.guard.js';
+import { CurrentUser, StaffOnly } from '../auth/auth.guard.js';
+import { scopeOf } from '../auth/scope.js';
 import type { AuthUser } from '../auth/auth.types.js';
 import { ApiZodBody, ApiZodQuery, ZodBody, ZodQuery } from '../common/zod.js';
 import type { AdminTestDetail, Paginated, PublicTestInfo, StudentQuestion, TestSummary } from '../contracts/responses.js';
 import { listTestsQuerySchema, saveTestSchema, type ListTestsQuery, type SaveTestRequest } from '../contracts/test-schemas.js';
 import { TestsService } from './tests.service.js';
 
-@ApiTags('tests (admin)')
-@AdminOnly()
+@ApiTags('tests (teachers & admins)')
+@StaffOnly()
 @Controller('tests')
 export class TestsController {
   constructor(private readonly tests: TestsService) {}
@@ -17,8 +18,8 @@ export class TestsController {
   @ApiOperation({ summary: 'Search and filter tests' })
   @ApiZodQuery(listTestsQuerySchema)
   @ApiOkResponse({ description: 'Paginated<TestSummary>' })
-  list(@ZodQuery(listTestsQuerySchema) query: ListTestsQuery): Promise<Paginated<TestSummary>> {
-    return this.tests.list(query);
+  list(@ZodQuery(listTestsQuerySchema) query: ListTestsQuery, @CurrentUser() user: AuthUser): Promise<Paginated<TestSummary>> {
+    return this.tests.list(query, scopeOf(user));
   }
 
   @Post()
@@ -32,7 +33,8 @@ export class TestsController {
   @Get(':id')
   @ApiOperation({ summary: 'Full test including answer keys and publish checks' })
   @ApiOkResponse({ description: 'AdminTestDetail' })
-  get(@Param('id', ParseUUIDPipe) id: string): Promise<AdminTestDetail> {
+  async get(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser): Promise<AdminTestDetail> {
+    await this.tests.assertAccess(id, scopeOf(user));
     return this.tests.get(id);
   }
 
@@ -42,51 +44,58 @@ export class TestsController {
     description: 'Send `questions: null` to keep existing questions. Questions are locked once a test has attempts.',
   })
   @ApiZodBody(saveTestSchema)
-  update(
+  async update(
     @Param('id', ParseUUIDPipe) id: string,
     @ZodBody(saveTestSchema) body: SaveTestRequest,
     @CurrentUser() user: AuthUser,
   ): Promise<AdminTestDetail> {
+    await this.tests.assertAccess(id, scopeOf(user));
     return this.tests.update(id, body, user.id);
   }
 
   @Delete(':id')
   @HttpCode(204)
   @ApiOperation({ summary: 'Delete a test that has no attempts (archive it otherwise)' })
-  remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+  async remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser): Promise<void> {
+    await this.tests.assertAccess(id, scopeOf(user));
     return this.tests.remove(id);
   }
 
   @Post(':id/publish')
   @HttpCode(200)
   @ApiOperation({ summary: 'Publish (validates every question first)' })
-  publish(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser): Promise<AdminTestDetail> {
+  async publish(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser): Promise<AdminTestDetail> {
+    await this.tests.assertAccess(id, scopeOf(user));
     return this.tests.setStatus(id, 'published', user.id);
   }
 
   @Post(':id/unpublish')
   @HttpCode(200)
   @ApiOperation({ summary: 'Move back to draft (the share link stops working)' })
-  unpublish(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser): Promise<AdminTestDetail> {
+  async unpublish(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser): Promise<AdminTestDetail> {
+    await this.tests.assertAccess(id, scopeOf(user));
     return this.tests.setStatus(id, 'draft', user.id);
   }
 
   @Post(':id/archive')
   @HttpCode(200)
   @ApiOperation({ summary: 'Archive (hidden from lists, results kept)' })
-  archive(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser): Promise<AdminTestDetail> {
+  async archive(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser): Promise<AdminTestDetail> {
+    await this.tests.assertAccess(id, scopeOf(user));
     return this.tests.setStatus(id, 'archived', user.id);
   }
 
   @Post(':id/duplicate')
   @ApiOperation({ summary: 'Copy a test (new draft with a new share link)' })
-  duplicate(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser): Promise<AdminTestDetail> {
+  async duplicate(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser): Promise<AdminTestDetail> {
+    await this.tests.assertAccess(id, scopeOf(user));
     return this.tests.duplicate(id, user.id);
   }
 
   @Get(':id/preview')
   @ApiOperation({ summary: 'The test as a student sees it (no answer keys)' })
-  preview(@Param('id', ParseUUIDPipe) id: string): Promise<{ info: PublicTestInfo; questions: StudentQuestion[] }> {
+  async preview(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser): Promise<{ info: PublicTestInfo; questions: StudentQuestion[] }> {
+    await this.tests.assertAccess(id, scopeOf(user));
     return this.tests.preview(id);
   }
 }

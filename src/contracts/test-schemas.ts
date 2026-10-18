@@ -70,6 +70,10 @@ export const testSettingsSchema = z.object({
   result_release_policy: z.enum(RELEASE_POLICIES).default('immediate'),
   show_correct_answers: z.boolean().default(true),
   show_explanations: z.boolean().default(true),
+  /** Only signed-in students may take the test (no guest attempts). */
+  require_student_account: z.boolean().default(false),
+  /** Only members of the classes this test is assigned to may take it. */
+  class_only: z.boolean().default(false),
   identity_fields: z
     .array(identityFieldSchema)
     .max(5)

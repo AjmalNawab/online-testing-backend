@@ -16,7 +16,12 @@ Browser ──► Next.js frontend (Vercel) ──► this API (Railway) ──�
                  └── Supabase Auth (admin login)└── Gemini API
 ```
 
-- **Admins** sign in with Supabase Auth. The API verifies the bearer token and reads the role from `profiles`.
+- **Roles:**
+  - **Admins** see and manage everything, approve teachers and manage staff.
+  - **Teachers** see only the tests they created, those tests' attempts and their own classes. The subject/topic catalog is shared.
+  - **Students** join classes with a code and take tests.
+  - Everyone signs in with Supabase Auth. The API verifies the bearer token and reads the role from `profiles`.
+- **Classes:** a teacher creates a class with an 8-character join code, students join it, and tests are assigned to classes with an optional due date. A test can be limited to members of its assigned classes (`class_only`).
 - **Students** are guests. Starting an attempt returns a random 256-bit attempt token, which is sent back as `X-Attempt-Token`. Only its SHA-256 hash is stored.
 - **Data access:** all business rules that need atomicity run in SQL functions, such as `start_attempt`, `save_answers`, `claim_submission`, `apply_grading` and `admin_save_test`. Only `service_role` can execute them. The `anon` and `authenticated` roles have no table access at all, so the public Supabase key cannot read data.
 - **Contracts:** the shared contracts (zod schemas, constants and response types) live in `src/contracts/`. The frontend copies them with `npm run sync:contracts`.
@@ -50,11 +55,13 @@ npm run start:dev       # http://localhost:4000, docs at http://localhost:4000/d
 | `DATABASE_URL` | yes | Postgres connection string from Supabase → **Connect**. URL-encode special characters in the password (`#` → `%23`, `*` → `%2A`, `@` → `%40`). |
 | `SUPABASE_URL` | yes | `https://<ref>.supabase.co` |
 | `SUPABASE_PUBLISHABLE_KEY` | yes | The public key. It is used only to verify admin logins. |
-| `SUPABASE_SECRET_KEY` | for account management | The secret key (Settings → API Keys). It lets the app create and remove administrator accounts. Server-side only. |
+| `SUPABASE_SECRET_KEY` | for accounts | The secret key (Settings → API Keys). It is needed for student and teacher sign-up and for creating or removing admin accounts. Server-side only. |
 | `SETUP_CODE` | for first-run setup | A secret phrase you choose (12+ characters). The `/setup` page asks for it before creating the first admin. |
 | `CORS_ORIGINS` | yes | Comma-separated frontend origins, e.g. `https://tests.example.com` |
 | `GEMINI_API_KEY` | no | Leave empty to disable AI features. The rest of the app still works. |
 | `GEMINI_MODEL` | no | Default `gemini-3.7-flash` |
+| `GEMINI_FALLBACK_MODELS` | no | Models to switch to, in order, when `GEMINI_MODEL` is overloaded or out of quota. Default `gemini-3.6-flash,gemini-3.5-flash-lite`; `none` disables fallback. A busy model is skipped for 2 minutes, and one that hit its quota for 30 minutes. |
+| `GEMINI_THINKING_LEVEL` | no | `low` (default), `medium` or `high`. Higher levels let the model reason longer but are far slower: 10 questions took ~185 s at the model default versus ~25 s at `low`. |
 | `AI_DAILY_LIMIT` | no | Maximum AI calls per admin per 24 hours (cost guard). Default 100. |
 | `EXPIRY_WORKER_ENABLED` | no | Default `true`. Keep exactly one always-on instance running it. |
 | `TRUST_PROXY_HOPS` | no | `1` behind Railway or another single proxy. This value is used for per-IP rate limits. |
@@ -114,6 +121,12 @@ All routes are under `/v1` except `/health`. Full schemas are in Swagger at `/do
 | Attempt (needs `X-Attempt-Token`) | `GET /v1/attempts/:id`, `PUT /v1/attempts/:id/answers`, `POST /v1/attempts/:id/submit`, `GET /v1/attempts/:id/result` |
 | Setup | `GET /v1/setup`, `POST /v1/setup` (needs `SETUP_CODE`; works only while no admin exists) |
 | Administrators (admin) | `GET /v1/admin/admins`, `POST /v1/admin/admins`, `DELETE /v1/admin/admins/:id` |
+| Sign-up | `POST /v1/auth/signup` (`account_type`: `student`, active at once; or `teacher`, a pending request that an admin approves) |
+| Access requests (admin) | `GET /v1/admin/access-requests`, `POST /v1/admin/access-requests/:id/approve` (the user becomes a teacher) and `…/reject` |
+| Staff (admin) | `GET /v1/admin/staff`, `POST /v1/admin/staff/:id/role` (`admin`, `teacher`, or `student` to remove access) |
+| Classes (teachers & admins) | `GET/POST /v1/classes`, `GET/PATCH/DELETE /v1/classes/:id`, `POST /v1/classes/:id/reset-code`, `POST /v1/classes/:id/members`, `DELETE /v1/classes/:id/members/:studentId`, `GET/POST /v1/tests/:id/assignments`, `DELETE /v1/tests/:id/assignments/:classId` |
+| My classes (students) | `POST /v1/me/classes/join`, `GET /v1/me/classes`, `DELETE /v1/me/classes/:id`, `GET /v1/me/assignments` |
+| My account (signed in) | `GET /v1/me/attempts`, `GET /v1/me/attempts/:id/result`, `POST /v1/me/attempts/:id/resume`, `POST /v1/me/attempts/claim`, `GET /v1/me/progress` |
 | Admin (needs a Bearer token) | `/v1/admin/tests…`, `/v1/admin/catalog…`, `/v1/admin/attempts…`, `/v1/admin/reports…` |
 | AI (admin) | `GET /v1/ai/status`, `POST /v1/ai/generate-test`, `POST /v1/ai/regenerate-question`, `POST /v1/ai/attempts/:id/grade-suggestion` |
 | Health | `GET /health`, `GET /health/ready` (checks the DB) |
@@ -140,6 +153,8 @@ Rate limits: 300 requests/min per IP overall, 5 setup attempts per 15 min, 10 at
 | Browser shows a CORS error | Add the exact frontend origin (scheme + host, no trailing slash) to `CORS_ORIGINS`. |
 | Admin gets 403 | The user isn't an admin yet. Add them under Settings → Administrators, or run `promote_to_admin`. |
 | `/setup` says "not enabled" | Set `SUPABASE_SECRET_KEY` and `SETUP_CODE` in the API environment and restart it. |
+| AI generation is slow or ends with `AI_TIMEOUT` | Keep `GEMINI_THINKING_LEVEL=low`. Tests are generated in parallel batches of 5 (4 at a time), so a 10-question test takes about 15 s. Very large tests take longer. |
+| `AI_BUSY` / `AI_QUOTA_EXCEEDED` | `AI_BUSY` means Google reports high demand on every configured model, so try again in a few minutes. `AI_QUOTA_EXCEEDED` means the key's limit is used up: the free tier allows about 20 requests per model per day, and a 10-question test uses 2. Enable billing in Google AI Studio for real use. |
 | AI returns `AI_NOT_CONFIGURED` / `AI_RATE_LIMITED` | Set `GEMINI_API_KEY`, or wait. The free Gemini tier has low per-minute limits. |
 | Attempts never auto-submit | The expiry worker isn't running. Make sure one always-on instance has `EXPIRY_WORKER_ENABLED=true`. Attempts are also finalized when opened. |
 
@@ -163,8 +178,8 @@ Use a paid Gemini tier for real student data, because free-tier data may be used
 
 ## Known limitations
 
-- Guests have no accounts. "Max attempts" is enforced per student name and identity fields, so a determined student can use a different name. Use identity fields (e.g. roll number) and review attempts.
-- Students can view a result only from the browser that took the test, because the attempt token is kept in that browser.
+- For guest attempts (taken without signing in), "Max attempts" counts by student name, and results open only in the browser that took the test. For exact limits and results on any device, turn on **Require students to sign in** for the test. Signed-in attempts are counted per account.
+- Sign-up creates accounts through the server with the secret key and does not verify email addresses. Teacher requests are checked by an admin before they get any access. Connect an email provider in Supabase if you need verified emails.
 - The Postgres TLS connection uses `rejectUnauthorized: false`. Traffic is still encrypted, but the certificate is not pinned.
 - AI-generated questions and grading suggestions can be wrong. They are always reviewed by an admin before publishing or release.
 - Code answers are graded by humans or AI review only. Code is never executed.

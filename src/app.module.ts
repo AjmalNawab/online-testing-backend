@@ -7,11 +7,13 @@ import { AiModule } from './ai/ai.module.js';
 import { AttemptsModule } from './attempts/attempts.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { CatalogModule } from './catalog/catalog.module.js';
+import { ClassesModule } from './classes/classes.module.js';
 import { ConfigModule } from './config/config.module.js';
 import { DatabaseModule } from './database/database.module.js';
 import { HealthController } from './health/health.controller.js';
 import { ReportsModule } from './reports/reports.module.js';
 import { ReviewsModule } from './reviews/reviews.module.js';
+import { StudentsModule } from './students/students.module.js';
 import { TestsModule } from './tests/tests.module.js';
 
 @Module({
@@ -33,6 +35,8 @@ import { TestsModule } from './tests/tests.module.js';
     ReviewsModule,
     ReportsModule,
     AiModule,
+    StudentsModule,
+    ClassesModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

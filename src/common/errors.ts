@@ -46,6 +46,9 @@ const KNOWN_DB_ERRORS: Record<string, { status: number; message: string }> = {
   USER_NOT_FOUND: { status: 404, message: 'User not found.' },
   SETUP_ALREADY_COMPLETE: { status: 409, message: 'Setup is already complete. Please sign in.' },
   CANNOT_REMOVE_SELF: { status: 409, message: 'You cannot remove your own administrator account.' },
+  STUDENT_ACCOUNT_REQUIRED: { status: 401, message: 'Please sign in with a student account to take this test.' },
+  REQUEST_NOT_FOUND: { status: 404, message: 'This access request was not found or was already handled.' },
+  NOT_IN_CLASS: { status: 403, message: 'This test is only for students in the class it was assigned to. Ask your teacher for the class code.' },
   LAST_ADMIN: { status: 409, message: 'At least one administrator must remain.' },
   FORBIDDEN: { status: 403, message: 'You do not have permission to do that.' },
 };

@@ -17,6 +17,7 @@ import type { AuthUser, AuthenticatedRequest, Role } from './auth.types.js';
 import { TokenVerifier } from './token-verifier.js';
 
 const ROLES_KEY = 'auth:roles';
+const OPTIONAL_KEY = 'auth:optional';
 const CACHE_TTL_MS = 15_000;
 const CACHE_MAX = 500;
 
@@ -42,7 +43,10 @@ export class AuthGuard implements CanActivate {
     ]);
     const req = context.switchToHttp().getRequest<Request & AuthenticatedRequest>();
     const token = extractBearer(req.headers.authorization);
-    if (!token) throw new AppError('UNAUTHORIZED', 401, 'Please sign in.');
+    if (!token) {
+      if (this.reflector.get<boolean>(OPTIONAL_KEY, context.getHandler())) return true;
+      throw new AppError('UNAUTHORIZED', 401, 'Please sign in.');
+    }
 
     const user = await this.resolveUser(token);
     if (roles && roles.length > 0 && !roles.includes(user.role)) {
@@ -60,8 +64,8 @@ export class AuthGuard implements CanActivate {
     const verified = await this.verifier.verify(token);
     if (!verified) throw new AppError('UNAUTHORIZED', 401, 'Your session has expired. Please sign in again.');
 
-    const profile = await this.db.one<{ display_name: string; role: Role }>(
-      'select display_name, role from public.profiles where id = $1',
+    const profile = await this.db.one<{ display_name: string; role: Role; access_request: AuthUser['accessRequest'] }>(
+      'select display_name, role, access_request from public.profiles where id = $1',
       [verified.userId],
     );
     const user: AuthUser = {
@@ -69,6 +73,7 @@ export class AuthGuard implements CanActivate {
       email: verified.email,
       displayName: profile?.display_name ?? '',
       role: profile?.role ?? 'student',
+      accessRequest: profile?.access_request ?? null,
     };
 
     if (this.cache.size >= CACHE_MAX) this.cache.delete(this.cache.keys().next().value!);
@@ -95,6 +100,19 @@ export function Auth(...roles: Role[]) {
 }
 
 export const AdminOnly = () => Auth('admin');
+
+/** Teachers and admins. Services still check that a teacher owns the record. */
+export const StaffOnly = () => Auth('admin', 'teacher');
+
+/** Signs the caller in when a bearer token is sent; anonymous requests still pass. */
+export function OptionalAuth() {
+  return applyDecorators(SetMetadata(OPTIONAL_KEY, true), SetMetadata(ROLES_KEY, []), UseGuards(AuthGuard), ApiBearerAuth());
+}
+
+/** The signed-in user, or null on an anonymous request (use with @OptionalAuth()). */
+export const MaybeUser = createParamDecorator((_data: unknown, ctx: ExecutionContext): AuthUser | null => {
+  return ctx.switchToHttp().getRequest<AuthenticatedRequest>().user ?? null;
+});
 
 export const CurrentUser = createParamDecorator((_data: unknown, ctx: ExecutionContext): AuthUser => {
   const req = ctx.switchToHttp().getRequest<AuthenticatedRequest>();

@@ -1,7 +1,8 @@
 import { Controller, Get, HttpCode, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags, ApiTooManyRequestsResponse } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { AdminOnly, CurrentUser } from '../auth/auth.guard.js';
+import { CurrentUser, StaffOnly } from '../auth/auth.guard.js';
+import { scopeOf } from '../auth/scope.js';
 import type { AuthUser } from '../auth/auth.types.js';
 import { ApiZodBody, ZodBody } from '../common/zod.js';
 import {
@@ -15,8 +16,8 @@ import type { QuestionDefinition } from '../contracts/question-schemas.js';
 import type { AdminAttemptDetail } from '../contracts/responses.js';
 import { AiService, type GenerateTestResponse } from './ai.service.js';
 
-@ApiTags('ai (admin)')
-@AdminOnly()
+@ApiTags('ai (teachers & admins)')
+@StaffOnly()
 @ApiTooManyRequestsResponse({ description: 'Rate limit or daily AI limit reached' })
 @Controller('ai')
 export class AiController {
@@ -46,10 +47,11 @@ export class AiController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({ summary: 'Generate one replacement question for the editor (not saved automatically)' })
   @ApiZodBody(aiRegenerateQuestionSchema)
-  regenerate(
+  async regenerate(
     @ZodBody(aiRegenerateQuestionSchema) body: AiRegenerateQuestionRequest,
     @CurrentUser() user: AuthUser,
   ): Promise<{ question: QuestionDefinition }> {
+    await this.ai.assertTestAccess(body.test_id, scopeOf(user));
     return this.ai.regenerateQuestion(body, user.id);
   }
 
@@ -58,11 +60,12 @@ export class AiController {
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @ApiOperation({ summary: 'AI-suggested marks and feedback for one written answer (requires approval)' })
   @ApiZodBody(aiGradeSuggestionSchema)
-  suggest(
+  async suggest(
     @Param('id', ParseUUIDPipe) attemptId: string,
     @ZodBody(aiGradeSuggestionSchema) body: { question_id: string },
     @CurrentUser() user: AuthUser,
   ): Promise<AdminAttemptDetail> {
+    await this.ai.assertAttemptAccess(attemptId, scopeOf(user));
     return this.ai.suggestAndReturn(attemptId, body.question_id, user.id);
   }
 }

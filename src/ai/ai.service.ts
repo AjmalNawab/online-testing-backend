@@ -1,3 +1,4 @@
+import type { Scope } from '../auth/scope.js';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { AppError, notFound } from '../common/errors.js';
 import { APP_CONFIG, type AppConfig } from '../config/env.js';
@@ -16,13 +17,34 @@ import { AiProvider } from './ai-provider.js';
 import { buildGenerationPrompts, generatedTestJsonSchema, outputBudget, validateGeneratedTest } from './generation.js';
 import { GRADING_JSON_SCHEMA, buildGradingPrompts, parseGradingSuggestion } from './grading-assist.js';
 
-const GENERATION_BATCH_SIZE = 10;
+/** Small batches run in parallel: ~10 s each with low thinking, instead of ~25 s for 10 questions in one call. */
+const GENERATION_BATCH_SIZE = 5;
+/** At most this many AI calls at once (stays inside per-minute quotas). */
+const GENERATION_CONCURRENCY = 4;
 
 /** 23 → [10, 10, 3] */
 export function splitIntoBatches(total: number, size: number): number[] {
   const batches: number[] = [];
   for (let left = total; left > 0; left -= size) batches.push(Math.min(size, left));
   return batches;
+}
+
+/** Like Promise.allSettled, but runs at most `limit` tasks at a time. Results keep input order. */
+export async function settleWithLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = Array.from({ length: items.length });
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      try {
+        results[i] = { status: 'fulfilled', value: await fn(items[i]!) };
+      } catch (reason) {
+        results[i] = { status: 'rejected', reason };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 export interface GenerateTestResponse {
@@ -44,6 +66,14 @@ export class AiService {
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
+  assertTestAccess(testId: string, scope: Scope): Promise<void> {
+    return this.tests.assertAccess(testId, scope);
+  }
+
+  assertAttemptAccess(attemptId: string, scope: Scope): Promise<void> {
+    return this.reviews.assertAccess(attemptId, scope);
+  }
+
   status() {
     return { configured: this.ai.configured, provider: this.config.ai.provider, model: this.ai.model };
   }
@@ -55,7 +85,7 @@ export class AiService {
 
     // Large requests are split into parallel batches to stay fast and within output limits.
     const batches = splitIntoBatches(req.question_count, GENERATION_BATCH_SIZE);
-    const settled = await Promise.allSettled(batches.map((n) => this.callGeneration(req, n, [], actorId, 'test')));
+    const settled = await settleWithLimit(batches, GENERATION_CONCURRENCY, (n) => this.callGeneration(req, n, [], actorId, 'test'));
     const failures = settled.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
     if (failures.length === settled.length) throw failures[0]!.reason;
 
@@ -129,6 +159,8 @@ export class AiService {
           show_correct_answers: true,
           show_explanations: req.include_explanations,
           identity_fields: [],
+          require_student_account: false,
+          class_only: false,
         },
         questions: result.questions,
       },

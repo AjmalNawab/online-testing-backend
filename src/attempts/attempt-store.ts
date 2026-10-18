@@ -19,13 +19,23 @@ export interface SaveAnswersResult {
 /** Typed wrapper over the SECURITY DEFINER functions in the migration. */
 export function createAttemptStore(rpc: RpcCaller) {
   return {
-    startAttempt: (shareToken: string, name: string, info: Record<string, string>, tokenHash: string) =>
+    startAttempt: (shareToken: string, name: string, info: Record<string, string>, tokenHash: string, studentId: string | null) =>
       rpc('start_attempt', {
         p_share_token: shareToken,
         p_student_name: name,
         p_student_info: info,
         p_token_hash: tokenHash,
+        p_student_id: studentId,
       }) as Promise<AttemptRow>,
+
+    getStudentBundle: (studentId: string, attemptId: string) =>
+      rpc('get_student_attempt_bundle', { p_student_id: studentId, p_attempt_id: attemptId }) as Promise<AttemptBundle | null>,
+
+    rotateToken: (studentId: string, attemptId: string, tokenHash: string) =>
+      rpc('rotate_attempt_token', { p_student_id: studentId, p_attempt_id: attemptId, p_token_hash: tokenHash }) as Promise<null>,
+
+    claimAttempts: (studentId: string, tokenHashes: string[]) =>
+      rpc('claim_attempts', { p_student_id: studentId, p_token_hashes: tokenHashes }) as Promise<number>,
 
     getBundle: (attemptId: string, tokenHash: string) =>
       rpc('get_attempt_bundle', { p_attempt_id: attemptId, p_token_hash: tokenHash }) as Promise<AttemptBundle | null>,
